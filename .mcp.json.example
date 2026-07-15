@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "memofinance": {
+      "command": "node",
+      "args": ["/path/to/memofinance/packages/mcp/dist/index.js"],
+      "env": {
+        "MEMOFINANCE_DB": "/path/to/memofinance/data/memories.db",
+        "OKX_BASE_URL": "https://www.okx.com"
+      }
+    }
+  }
+}

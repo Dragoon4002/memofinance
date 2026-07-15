@@ -1,0 +1,7 @@
+node_modules/
+dist/
+data/
+.mcp.json
+*.db
+*.db-shm
+*.db-wal
