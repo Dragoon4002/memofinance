@@ -74,7 +74,7 @@ export function registerRiskTools(): ToolSpec[] {
 
         let memoryContext: string | null = null;
         if (includeMemory) {
-          const memories = ctx.memoryStore.recall(agentId, { keyword: symbol.split("-")[0], limit: 3 });
+          const memories = await ctx.memoryStore.recall(agentId, { keyword: symbol.split("-")[0], limit: 3 });
           if (memories.length > 0) {
             memoryContext = memories
               .map(m => `[${m.context_type}] ${JSON.stringify(JSON.parse(m.content) as unknown)}`)
@@ -125,7 +125,7 @@ export function registerRiskTools(): ToolSpec[] {
         let memoryContext: string | null = null;
 
         if (!riskTolerance) {
-          const prefs = ctx.memoryStore.recall(agentId, { contextType: "preference", limit: 5 });
+          const prefs = await ctx.memoryStore.recall(agentId, { contextType: "preference", limit: 5 });
           const riskPref = prefs.find(p => {
             const c = JSON.parse(p.content) as Record<string, unknown>;
             return c.risk_tolerance;

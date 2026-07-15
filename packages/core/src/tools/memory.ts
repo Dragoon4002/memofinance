@@ -25,7 +25,7 @@ export function registerMemoryTools(): ToolSpec[] {
         const contextType = args.context_type as string;
         const content = args.content as unknown;
         const tags = (args.tags as string[] | undefined) ?? [];
-        const id = ctx.memoryStore.store(agentId, contextType, content, tags);
+        const id = await ctx.memoryStore.store(agentId, contextType, content, tags);
         return {
           id, stored: true, agent_id: agentId, context_type: contextType,
           card: `✅ Stored ${contextType} for ${agentId}${tags.length ? ` [${tags.join(", ")}]` : ""} — ID: ${id.slice(0, 8)}`,
@@ -48,7 +48,7 @@ export function registerMemoryTools(): ToolSpec[] {
         required: ["agent_id"],
       },
       handler: async (args, ctx: ToolContext) => {
-        const memories = ctx.memoryStore.recall(args.agent_id as string, {
+        const memories = await ctx.memoryStore.recall(args.agent_id as string, {
           contextType: args.context_type as string | undefined,
           tags: args.tags as string[] | undefined,
           keyword: args.keyword as string | undefined,

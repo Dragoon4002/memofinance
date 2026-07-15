@@ -1,7 +1,5 @@
-import Database from "better-sqlite3";
+import { Pool } from "@neondatabase/serverless";
 import { randomUUID } from "node:crypto";
-import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
 
 export interface Memory {
   id: string;
@@ -14,56 +12,63 @@ export interface Memory {
 }
 
 export class SQLiteMemoryStore {
-  private db: Database.Database;
+  private pool: Pool;
+  private ready: Promise<void>;
 
-  constructor(dbPath = "./data/memories.db") {
-    mkdirSync(dirname(dbPath), { recursive: true });
-    this.db = new Database(dbPath);
-    this.db.pragma("journal_mode = WAL");
-    this.init();
+  constructor(_dbPath?: string) {
+    const url = process.env.DATABASE_URL;
+    if (!url) throw new Error("DATABASE_URL env var required");
+    this.pool = new Pool({ connectionString: url, max: 5 });
+    this.ready = this.init();
   }
 
-  private init() {
-    this.db.exec(`
+  private async init() {
+    await this.pool.query(`
       CREATE TABLE IF NOT EXISTS memories (
         id TEXT PRIMARY KEY,
         agent_id TEXT NOT NULL,
         context_type TEXT NOT NULL,
         content TEXT NOT NULL,
         tags TEXT DEFAULT '',
-        created_at INTEGER NOT NULL,
+        created_at BIGINT NOT NULL,
         relevance_score REAL DEFAULT 1.0
-      );
-      CREATE INDEX IF NOT EXISTS idx_agent ON memories(agent_id);
-      CREATE INDEX IF NOT EXISTS idx_type ON memories(agent_id, context_type);
+      )
     `);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_agent ON memories(agent_id)`);
+    await this.pool.query(`CREATE INDEX IF NOT EXISTS idx_type ON memories(agent_id, context_type)`);
   }
 
-  store(agentId: string, contextType: string, content: unknown, tags: string[] = []): string {
+  async store(agentId: string, contextType: string, content: unknown, tags: string[] = []): Promise<string> {
+    await this.ready;
     const id = randomUUID();
-    this.db.prepare(`
-      INSERT INTO memories (id, agent_id, context_type, content, tags, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, agentId, contextType, JSON.stringify(content), tags.join(","), Date.now());
+    await this.pool.query(
+      `INSERT INTO memories (id, agent_id, context_type, content, tags, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, agentId, contextType, JSON.stringify(content), tags.join(","), Date.now()],
+    );
     return id;
   }
 
-  recall(agentId: string, opts: { contextType?: string; tags?: string[]; keyword?: string; limit?: number }): Memory[] {
+  async recall(agentId: string, opts: { contextType?: string; tags?: string[]; keyword?: string; limit?: number }): Promise<Memory[]> {
+    await this.ready;
     const { contextType, tags, keyword, limit = 10 } = opts;
-    let sql = "SELECT * FROM memories WHERE agent_id = ?";
-    const params: unknown[] = [agentId];
 
-    if (contextType) { sql += " AND context_type = ?"; params.push(contextType); }
-    if (keyword) { sql += " AND content LIKE ?"; params.push(`%${keyword}%`); }
+    const params: unknown[] = [agentId];
+    let sql = "SELECT * FROM memories WHERE agent_id = $1";
+    let i = 2;
+
+    if (contextType) { sql += ` AND context_type = $${i++}`; params.push(contextType); }
+    if (keyword) { sql += ` AND content ILIKE $${i++}`; params.push(`%${keyword}%`); }
     if (tags?.length) {
-      for (const tag of tags) { sql += " AND tags LIKE ?"; params.push(`%${tag}%`); }
+      for (const tag of tags) { sql += ` AND tags ILIKE $${i++}`; params.push(`%${tag}%`); }
     }
 
-    sql += " ORDER BY created_at DESC LIMIT ?";
+    sql += ` ORDER BY created_at DESC LIMIT $${i}`;
     params.push(limit);
 
-    return this.db.prepare(sql).all(...params) as Memory[];
+    const { rows } = await this.pool.query<Memory>(sql, params);
+    return rows;
   }
 
-  close() { this.db.close(); }
+  close() { void this.pool.end(); }
 }
