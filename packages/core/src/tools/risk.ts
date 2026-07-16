@@ -39,6 +39,94 @@ const YIELD_OPPORTUNITIES = [
 export function registerRiskTools(): ToolSpec[] {
   return [
     {
+      name: "get_market_sentiment",
+      description: "Aggregate 24h price changes across top USDT pairs to compute overall crypto market sentiment — bull, bear, or neutral.",
+      isWrite: false,
+      inputSchema: { type: "object", properties: {}, required: [] },
+      handler: async (_args, ctx: ToolContext) => {
+        const raw = await ctx.client.publicGet("/api/v5/market/tickers", { instType: "SPOT" }) as { code: string; data: Record<string, string>[]; msg: string };
+        if (raw.code !== "0") throw new Error(`OKX error: ${raw.msg}`);
+
+        const usdtPairs = raw.data.filter(d => d.instId?.endsWith("-USDT")).slice(0, 50);
+        const changes = usdtPairs.map(d => {
+          const last = parseFloat(d.last ?? "0");
+          const open24h = parseFloat(d.open24h ?? "0");
+          return open24h > 0 ? ((last - open24h) / open24h) * 100 : 0;
+        });
+
+        const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
+        const bullCount = changes.filter(c => c > 0).length;
+        const bullPct = Math.round((bullCount / changes.length) * 100);
+        const clamped = Math.max(0, Math.min(100, Math.round(50 + avg * 3)));
+        const sentiment = avg > 2 ? "🐂 BULLISH" : avg < -2 ? "🐻 BEARISH" : "😐 NEUTRAL";
+
+        return {
+          sentiment, score: clamped, avg_change_24h: `${avg >= 0 ? "+" : ""}${avg.toFixed(2)}%`,
+          pairs_analyzed: changes.length, bull_pct: `${bullPct}%`, bear_pct: `${100 - bullPct}%`,
+          card: `🌡️ Market Sentiment: ${sentiment} | Score: ${clamped}/100 | Avg 24h: ${avg >= 0 ? "+" : ""}${avg.toFixed(2)}% | ${bullPct}% pairs up`,
+        };
+      },
+    },
+    {
+      name: "get_personalized_brief",
+      description: "Generate a personalized intelligence brief for an agent — pulls stored watchlist/portfolio and preferences from memory, fetches live prices and market sentiment.",
+      isWrite: false,
+      inputSchema: {
+        type: "object",
+        properties: {
+          agent_id: { type: "string", description: "Agent identifier" },
+          watchlist: { type: "array", items: { type: "string" }, description: "Symbol override list (uses memory portfolio if omitted)" },
+        },
+        required: ["agent_id"],
+      },
+      handler: async (args, ctx: ToolContext) => {
+        const agentId = args.agent_id as string;
+        let watchlist = (args.watchlist as string[] | undefined) ?? [];
+
+        if (watchlist.length === 0) {
+          const portfolioEntries = await ctx.memoryStore.recall(agentId, { contextType: "portfolio", limit: 10 });
+          const portfolioSymbols = portfolioEntries.map(e => (JSON.parse(e.content) as { symbol: string }).symbol);
+          const analyses = await ctx.memoryStore.recall(agentId, { contextType: "analysis", limit: 5 });
+          const analysisSymbols = analyses.flatMap(e =>
+            (e.tags ?? "").split(",").filter(t => t.length >= 2 && /^[A-Z]+$/.test(t)).map(t => `${t}-USDT`)
+          );
+          watchlist = [...new Set([...portfolioSymbols, ...analysisSymbols])].slice(0, 5);
+        }
+        if (watchlist.length === 0) watchlist = ["BTC-USDT", "ETH-USDT"];
+
+        const prefs = await ctx.memoryStore.recall(agentId, { contextType: "preference", limit: 3 });
+        const riskPref = prefs.find(p => (JSON.parse(p.content) as Record<string, unknown>).risk_tolerance);
+        const riskTolerance = riskPref
+          ? (JSON.parse(riskPref.content) as Record<string, string>).risk_tolerance
+          : "medium";
+
+        const assetBriefs = await Promise.all(watchlist.map(async (symbol) => {
+          try {
+            const raw = await ctx.client.publicGet("/api/v5/market/ticker", { instId: symbol });
+            const ticker = normalizeTickerResponse(raw, symbol);
+            return `${symbol}: $${ticker.price} (${ticker.change_24h})`;
+          } catch { return `${symbol}: unavailable`; }
+        }));
+
+        const sentimentRaw = await ctx.client.publicGet("/api/v5/market/tickers", { instType: "SPOT" }) as { code: string; data: Record<string, string>[]; msg: string };
+        let sentimentLine = "Market: data unavailable";
+        if (sentimentRaw.code === "0") {
+          const changes = sentimentRaw.data.filter(d => d.instId?.endsWith("-USDT")).slice(0, 30).map(d => {
+            const last = parseFloat(d.last ?? "0"), open = parseFloat(d.open24h ?? "0");
+            return open > 0 ? ((last - open) / open) * 100 : 0;
+          });
+          const avg = changes.reduce((a, b) => a + b, 0) / changes.length;
+          sentimentLine = avg > 2 ? `🐂 BULLISH (+${avg.toFixed(1)}%)` : avg < -2 ? `🐻 BEARISH (${avg.toFixed(1)}%)` : `😐 NEUTRAL (${avg.toFixed(1)}%)`;
+        }
+
+        return {
+          agent_id: agentId, risk_tolerance: riskTolerance, watchlist,
+          asset_briefs: assetBriefs,
+          card: `🌅 Brief [${agentId}] | Profile: ${riskTolerance} risk | Market: ${sentimentLine}\n📊 ${assetBriefs.join(" | ")}`,
+        };
+      },
+    },
+    {
       name: "risk_alpha_score",
       description: "Compute a combined risk + momentum score for a token pair. Optionally incorporates past agent memory for personalized context.",
       isWrite: false,

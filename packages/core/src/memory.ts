@@ -70,5 +70,14 @@ export class SQLiteMemoryStore {
     return rows;
   }
 
+  async delete(agentId: string, memoryId: string): Promise<boolean> {
+    await this.ready;
+    const result = await this.pool.query(
+      `DELETE FROM memories WHERE id = $1 AND agent_id = $2`,
+      [memoryId, agentId],
+    );
+    return (result.rowCount ?? 0) > 0;
+  }
+
   close() { void this.pool.end(); }
 }
