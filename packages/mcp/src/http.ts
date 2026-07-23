@@ -25,6 +25,15 @@ const httpServer = createHttpServer((req, res) => {
     res.end(JSON.stringify({ ok: true }));
     return;
   }
+  if (req.method === "GET" && req.url === "/") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ name: "MemoFinance MCP", version: "1.0.0", transport: "StreamableHTTP", endpoint: "/mcp" }));
+    return;
+  }
+  // Ensure Accept header satisfies StreamableHTTP requirement
+  if (!req.headers["accept"]?.includes("text/event-stream")) {
+    req.headers["accept"] = "application/json, text/event-stream";
+  }
   transport.handleRequest(req, res);
 });
 
