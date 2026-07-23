@@ -30,9 +30,13 @@ const httpServer = createHttpServer((req, res) => {
     res.end(JSON.stringify({ name: "MemoFinance MCP", version: "1.0.0", transport: "StreamableHTTP", endpoint: "/mcp" }));
     return;
   }
-  // Ensure Accept header satisfies StreamableHTTP requirement
+  // Hono reads rawHeaders to build Web Request — patch both
   if (!req.headers["accept"]?.includes("text/event-stream")) {
     req.headers["accept"] = "application/json, text/event-stream";
+    const raw = req.rawHeaders;
+    const idx = raw.findIndex((v, i) => i % 2 === 0 && v.toLowerCase() === "accept");
+    if (idx >= 0) { raw[idx + 1] = "application/json, text/event-stream"; }
+    else { raw.push("Accept", "application/json, text/event-stream"); }
   }
   transport.handleRequest(req, res);
 });
